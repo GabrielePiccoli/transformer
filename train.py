@@ -1,3 +1,7 @@
+""" !git clone https://github.com/gabrielepiccoli/transformer.git
+import sys
+sys.path.append("/kaggle/working/transformer") """
+
 import torch
 import torch.nn as nn
 from torch.utils.data.dataloader import DataLoader
@@ -15,6 +19,71 @@ from pathlib import Path
 import torch.utils.tensorboard as tensorboard
 
 import tqdm
+
+def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
+
+    sos_idx = tokenizer_src.token_to_id("[SOS]")
+    eos_idx = tokenizer_src.token_to_id("[EOS]")
+
+    encoder_output = model.encode(source, source_mask)
+    decoder_input = torch.empty(1,1).fill_(sos_idx).type_as(source).to(device)
+
+    while True:
+        if decoder_input.size(1) >= max_len:
+            break
+
+        decoder_mask = dataset.causal_mask(decoder_input.size(1)).type_as(source_mask).to(device)
+
+        out = model.decode(encoder_output, source_mask, decoder_input, decoder_mask)
+
+        prob = model.project(out[:,-1])
+        _, next_word = torch.max(prob, dim = 1)
+        decoder_input = torch.cat([decoder_input, torch.empty(1,1).type_as(source).fill_(next_word.item()).to(device)], dim = 1)
+
+        if next_word == eos_idx:
+            break
+
+    return decoder_input.squeeze(0)
+
+def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_state, writer, num_examples = 2):
+    model.eval()
+    count = 0
+
+    source_texts = []
+    expected = []
+    predicted = []
+
+    console_width = 80
+    with torch.no_grad():
+        for batch in validation_ds:
+            count += 1
+            encoder_input = batch["encoder_input"].to(device)
+            encoder_mask = batch["encoder_mask"].to(device)
+
+            #assert encoder_input.size(0) == 1, "Batch size must be 1 for validation"
+
+            model_out = greedy_decode(model, encoder_input, encoder_mask, tokenizer_src, tokenizer_tgt, max_len, device)
+
+            source_text = batch["src_text"][0]
+            target_text = batch["tgt_text"][0]
+            
+            model_out_text = tokenizer_tgt.decode(model_out.detach().cpu().numpy())
+
+            source_texts.append(source_text)
+            expected.append(target_text)
+            predicted.append(model_out_text)
+
+            print_msg("_"*console_width)
+            print_msg(f"SOURCE: {source_text}")
+            print_msg(f"EXPECTED: {target_text}")
+            print_msg(f"PREDICTION: {model_out_text}")
+
+            if count >= num_examples:
+                break
+    if writer:
+        a = a
+
+
 
 def get_all_sentences(ds, lang):
     for item in ds:
@@ -64,7 +133,9 @@ def get_ds(config):
     print("Maxes ", max_len_src, max_len_tgt)
 
     train_dataloader = DataLoader(train_ds, batch_size = config["batch_size"], shuffle = True)
-    val_dataloader = DataLoader(val_ds, batch_size = config["batch_size"], shuffle = True)
+    val_dataloader = DataLoader(val_ds, batch_size = 1, shuffle = True)
+
+    print(train_dataloader)
 
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 
@@ -98,7 +169,7 @@ def train_model(config):
 
     for epoch in range(initial_epoch, config["num_epochs"]):
         model.train()
-        batch_iterator = tqdm.tqdm(train_dataloader, desc = f"Processinf epooch {epoch:02d}")
+        batch_iterator = tqdm.tqdm(train_dataloader, desc = f"Processing epoch {epoch:02d}")
 
         for batch in batch_iterator:
             encoder_input = batch["encoder_input"].to(device)
@@ -121,6 +192,8 @@ def train_model(config):
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
+
+            run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config["seq_len"], device, lambda msg: batch_iterator.write(msg), global_step, writer)
 
             global_step +=1
 
