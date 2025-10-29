@@ -81,7 +81,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             if count >= num_examples:
                 break
     if writer:
-        a = a
+        a = 1
 
 
 

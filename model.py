@@ -10,7 +10,9 @@ class InputEmbeddings(nn.Module):
         self.embedding = nn.Embedding(vocab_size, d_model)
 
     def forward(self, x):
-        return self.embedding(x)*math.sqrt(self.d_model)
+        x = self.embedding(x)*math.sqrt(self.d_model)
+        #print("Input embedding: ", torch.mean(x).item())
+        return x
     
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model:int, seq_len:int, dropout:float):
@@ -24,7 +26,7 @@ class PositionalEncoding(nn.Module):
 
         # Position of the words in the sequence
         position = torch.arange(0, seq_len, dtype = torch.float).unsqueeze(1) # (seq_len, 1)
-        div_term = torch.exp(torch.arange(0, d_model, 2)).float() * (-math.log(10000.0) / d_model) # (d_model/2,)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)) # (d_model/2,)
 
         pe[:, 0::2] = torch.sin(position * div_term) # even indices
         pe[:, 1::2] = torch.cos(position * div_term) # odd indices
@@ -34,8 +36,13 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
+        #print("Positional Encoding - pre:", torch.mean(x).item())
+        #print("Sizes ", self.pe.shape, x.shape)
+        #print("PE: ", torch.mean(self.pe))
         # embedding + positional encoding, no gradient for positional encoding
-        x = x + self.pe[:, :x.shape[1], :].detach()
+        x = x + (self.pe[:, :x.shape[1], :]).requires_grad_(False)
+
+        #print("Positional Encoding - post:", torch.mean(x).item())
         return self.dropout(x)
     
 class LayerNormalization(nn.Module):
@@ -43,13 +50,14 @@ class LayerNormalization(nn.Module):
         super().__init__()
         self.eps = eps
         self.alpha = nn.Parameter(torch.ones(1))
-        self.bias = nn.Parameter(torch.ones(1))
+        self.bias = nn.Parameter(torch.zeros(1))
 
     def forward(self, x):
         mean = x.mean(-1, keepdim=True)
         std = x.std(-1, keepdim=True)
-
-        return self.alpha * (x - mean) / (std + self.eps) + self.bias
+        x = self.alpha * (x - mean) / (std + self.eps) + self.bias
+        #print("Normalization: ", torch.mean(x).item())
+        return x
     
 class FeedForwardBlock(nn.Module):
     def __init__(self, d_model:int, d_ff:int, dropout:float):
@@ -63,6 +71,8 @@ class FeedForwardBlock(nn.Module):
         x = torch.relu(x)
         x = self.dropout(x)
         x = self.linear_2(x)
+
+        #print("Feed forward: ", torch.mean(x).item())
         return x
     
 class MultiHeadAttentionBlock(nn.Module):
@@ -114,6 +124,7 @@ class MultiHeadAttentionBlock(nn.Module):
         x = x.contiguous().view(x.shape[0], -1, self.d_model)
         x = self.w_o(x)
 
+        #print("Multihead Attention: ", torch.mean(x).item())
         return x
 
 class ResidualConnection(nn.Module):
@@ -123,7 +134,10 @@ class ResidualConnection(nn.Module):
         self.norm = LayerNormalization()
 
     def forward(self, x, sublayer):
-        return x + self.dropout(sublayer(self.norm(x)))
+        x = x + self.dropout(sublayer(self.norm(x)))
+
+        #print("Residual Connection: ", torch.mean(x).item())
+        return x
 
 class EncoderBlock(nn.Module):
     def __init__(self, 
@@ -138,6 +152,8 @@ class EncoderBlock(nn.Module):
     def forward(self, x, src_mask):
         x = self.residual_connections[0](x, lambda x: self.self_attention_block(x,x,x,src_mask))
         x = self.residual_connections[1](x, self.feed_forward_block)
+
+        #print("Encoder Block: ", torch.mean(x).item())
         return x
     
 class Encoder(nn.Module):
@@ -149,7 +165,10 @@ class Encoder(nn.Module):
     def forward(self, x, src_mask):
         for layer in self.layers:
             x = layer(x, src_mask)
-        return self.norm(x)
+
+        x = self.norm(x)
+        #print("Encoder: ", torch.mean(x).item())
+        return x
     
 
 class DecoderBlock(nn.Module):
@@ -168,7 +187,7 @@ class DecoderBlock(nn.Module):
         x = self.residual_connections[0](x, lambda x : self.self_attention_block(x,x,x, tgt_mask))
         x = self.residual_connections[1](x, lambda x : self.cross_attention_block(x, encoder_output, encoder_output, src_mask))
         x = self.residual_connections[2](x, self.feef_forward_block)
-
+        #print("Decoder Block: ", torch.mean(x).item())
         return x
     
 class Decoder(nn.Module):
@@ -182,6 +201,7 @@ class Decoder(nn.Module):
             x = layer(x, encoder_output, src_mask, tgt_mask)
 
         x = self.norm(x)
+        #print("Decoder: ", torch.mean(x).item())
         return x
 
 class ProjectionLayer(nn.Module):
@@ -190,7 +210,9 @@ class ProjectionLayer(nn.Module):
         self.proj = nn.Linear(d_model, vocab_size)
     
     def forward(self, x):
-        return torch.log_softmax(self.proj(x), dim = -1)
+        x = torch.log_softmax(self.proj(x), dim = -1)
+        #print("Projection: ", torch.mean(x).item())
+        return x
     
 class Transformer(nn.Module):
     def __init__(self, 
@@ -223,7 +245,8 @@ class Transformer(nn.Module):
         return tgt
     
     def project(self, decoder_output):
-        return self.projection_layer(decoder_output)
+        x = self.projection_layer(decoder_output)
+        return x
     
 
 
